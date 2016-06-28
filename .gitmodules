@@ -1,0 +1,3 @@
+[submodule "pynn"]
+	path = pynn
+	url = https://github.com/nthend/pynn.git
