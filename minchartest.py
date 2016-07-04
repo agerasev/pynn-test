@@ -6,11 +6,15 @@ import pynn as nn
 
 
 data = '''
-Wxh = np.random.randn(hidden_size, vocab_size)*0.01 # input to hidden
-Whh = np.random.randn(hidden_size, hidden_size)*0.01 # hidden to hidden
-Why = np.random.randn(vocab_size, hidden_size)*0.01 # hidden to output
-bh = np.zeros((hidden_size, 1)) # hidden bias
-by = np.zeros((vocab_size, 1)) # output bias
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi ut purus nec dolor aliquam egestas.
+Quisque pharetra sed orci ut sollicitudin. Nulla facilisi. Vestibulum at consequat ipsum.
+Mauris eu luctus elit, vitae sagittis nisl. Phasellus ex eros, dignissim in vehicula sit amet, dignissim id dui.
+Vestibulum non lacus auctor, cursus turpis a, posuere ipsum. Nunc convallis dictum lacus quis egestas.
+Vivamus quis urna justo. Suspendisse sed sapien vitae sapien placerat ultricies.
+Proin elementum odio id ante dictum, a porttitor orci efficitur.
+Aenean elementum nulla nibh, id venenatis magna tristique in. Donec lacinia semper faucibus.
+In vitae porta nunc, in tempor est. Nam vel massa ultricies, aliquet ligula suscipit, suscipit odio.
+Vivamus consequat porta ligula ut interdum.
 '''
 
 chars = sorted(list(set(data)))
@@ -31,6 +35,7 @@ Why = np.random.randn(vocab_size, hidden_size)*0.01  # hidden to output
 bh = np.zeros((hidden_size, 1))  # hidden bias
 by = np.zeros((vocab_size, 1))  # output bias
 
+istate = np.zeros((hidden_size, 1))
 
 opt = {
 	'clip': 5,
@@ -39,21 +44,21 @@ opt = {
 	'rate': learning_rate
 }
 
-loss = nn.SoftmaxLoss(**opt)
-
 net = nn.Network(
 	[
-		nn.Matrix((vocab_size, hidden_size), **opt, state=Wxh.T),
+		nn.Matrix((vocab_size, hidden_size), **opt, weight=Wxh.T),
 
 		nn.Fork(**opt),
-		nn.Bias(hidden_size, **opt, state=bh.reshape(hidden_size)),
+		nn.Bias(hidden_size, **opt, weight=bh.reshape(hidden_size)),
 		nn.Tanh(**opt),
 		nn.Fork(**opt),
-		nn.Matrix((hidden_size, hidden_size), **opt, state=Whh.T),
 
-		nn.Matrix((hidden_size, vocab_size), **opt, state=Why.T),
-		nn.Bias(vocab_size, **opt, state=by.reshape(vocab_size)),
-		loss
+		nn.Depot(**opt, weight=istate.reshape(hidden_size)),
+		nn.Matrix((hidden_size, hidden_size), **opt, weight=Whh.T),
+
+		nn.Matrix((hidden_size, vocab_size), **opt, weight=Why.T),
+		nn.Bias(vocab_size, **opt, weight=by.reshape(vocab_size)),
+		nn.SoftmaxLoss(**opt)
 	],
 	[
 		((-1, 1), (0, 1)),
@@ -64,17 +69,18 @@ net = nn.Network(
 		((2, 2), (3, 1)),
 		((3, 2), (4, 1)),
 		((4, 2), (5, 1)),
-		((5, 2), (1, 3)),
+		((5, 2), (6, 1)),
+		((6, 2), (1, 3)),
 
-		((4, 3), (6, 1)),
+		((4, 3), (7, 1)),
 
-		((6, 2), (7, 1)),
 		((7, 2), (8, 1)),
-		((8, 2), (-1, 2))
+		((8, 2), (9, 1)),
+		((9, 2), (-1, 2))
 	]
 )
 
-net.queue.put((net.paths[5][0], np.zeros(hidden_size)))
+net.push(0, 'emit')
 
 
 class Handler:
@@ -98,25 +104,37 @@ def lossFun(inputs, targets, hprev):
 	xs, hs, ys, ps = {}, {}, {}, {}
 	hs[-1] = np.copy(hprev)
 	loss = 0
+
 	# forward pass
 	for t in range(len(inputs)):
-		xs[t] = np.zeros((vocab_size,1))  # encode in 1-of-k representation
+		xs[t] = np.zeros((vocab_size, 1))  # encode in 1-of-k representation
 		xs[t][inputs[t]] = 1
 		hs[t] = np.tanh(np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t-1]) + bh)  # hidden state
 		ys[t] = np.dot(Why, hs[t]) + by  # unnormalized log probabilities for next chars
 		ps[t] = np.exp(ys[t]) / np.sum(np.exp(ys[t]))  # probabilities for next chars
-		loss += -np.log(ps[t][targets[t],0])  # softmax (cross-entropy loss)
+		loss += -np.log(ps[t][targets[t], 0])  # softmax (cross-entropy loss)
+
+		(a, b) = (hs[t-1].reshape(hidden_size), net.nodes[5].slot)
+		if not np.allclose(a, b):
+			print('diff: %f' % np.sum((a - b)**2))
+			raise Exception('hidden state mismatch')
 
 		net.push(1, xs[t].reshape(vocab_size))
-		print(np.sum((ps[t].reshape(vocab_size) - net.emit.out)**2))
-		# net.push(0, 'clear.slot')
+		net.push(0, 'release')
+
+		(a, b) = (ps[t].reshape(vocab_size), net.emit.out)
+		if not np.allclose(a, b):
+			print('diff: %f' % np.sum((a - b)**2))
+			raise Exception('forward output mismatch')
+
+	print('[ ok ] forward test passed')
 
 	# backward pass: compute gradients going backwards
 	dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
 	dbh, dby = np.zeros_like(bh), np.zeros_like(by)
 	dhnext = np.zeros_like(hs[0])
 
-	net.queue.put((net.paths[5][1], np.zeros(hidden_size)))
+	net.push(0, 'emit.error')
 
 	for t in reversed(range(len(inputs))):
 		dy = np.copy(ps[t])
@@ -130,8 +148,29 @@ def lossFun(inputs, targets, hprev):
 		dWhh += np.dot(dhraw, hs[t-1].T)
 		dhnext = np.dot(Whh.T, dhraw)
 
-		net.push(2, dy.reshape(vocab_size))
-		print(np.sum((dWhy.T - net.nodes[6].grad)**2))
+		net.push(2, targets[t])
+
+	(a, b) = (dWhy.T, net.nodes[7].grad)
+	if not np.allclose(a, b):
+		print('diff: %f' % np.sum((a - b)**2))
+		raise Exception('backward Why grad mismatch')
+
+	(a, b) = (dWhh.T, net.nodes[6].grad)
+	if not np.allclose(a, b):
+		print('diff: %f' % np.sum((a - b)**2))
+		raise Exception('backward Whh grad mismatch')
+
+	(a, b) = (dWxh.T, net.nodes[0].grad)
+	if not np.allclose(a, b):
+		print('diff: %f' % np.sum((a - b)**2))
+		raise Exception('backward Wxh grad mismatch')
+
+	(a, b) = (hs[len(inputs) - 1].reshape(hidden_size), net.nodes[5].slot)
+	if not np.allclose(a, b):
+		print('diff: %f' % np.sum((a - b)**2))
+		raise Exception('final hidden state mismatch')
+
+	print('[ ok ] backward test passed')
 
 	for dparam in [dWxh, dWhh, dWhy, dbh, dby]:
 		np.clip(dparam, -5, 5, out=dparam)  # clip to mitigate exploding gradients
@@ -161,10 +200,10 @@ n, p = 0, 0
 mWxh, mWhh, mWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
 mbh, mby = np.zeros_like(bh), np.zeros_like(by)  # memory variables for Adagrad
 smooth_loss = -np.log(1.0/vocab_size)*seq_length  # loss at iteration 0
-for i in range(1):  # while True:
+for i in range(2):  # while True:
 	# prepare inputs (we're sweeping from left to right in steps seq_length long)
 	if p+seq_length+1 >= len(data) or n == 0:
-		hprev = np.zeros((hidden_size, 1))  # reset RNN memory
+		hprev = istate  # np.zeros((hidden_size, 1))  # reset RNN memory
 		p = 0  # go from start of data
 	inputs = [char_to_ix[ch] for ch in data[p:p+seq_length]]
 	targets = [char_to_ix[ch] for ch in data[p+1:p+seq_length+1]]
@@ -177,6 +216,7 @@ for i in range(1):  # while True:
 
 	# forward seq_length characters through the net and fetch gradient
 	loss, dWxh, dWhh, dWhy, dbh, dby, hprev = lossFun(inputs, targets, hprev)
+
 	smooth_loss = smooth_loss * 0.999 + loss * 0.001
 	# if n % 100 == 0: print('iter %d, loss: %f' % (n, smooth_loss))  # print progress
 
@@ -188,6 +228,14 @@ for i in range(1):  # while True:
 	):
 		mem += dparam * dparam
 		param += -learning_rate * dparam / np.sqrt(mem + 1e-8)  # adagrad update
+
+	net.push(0, 'learn')
+
+	(a, b) = (Whh.T, net.nodes[6].weight)
+	if not np.allclose(a, b):
+		print('diff: %f' % np.sum((a - b)**2))
+		raise Exception('learn Why weight mismatch')
+	print('[ ok ] learn test passed')
 
 	p += seq_length  # move data pointer
 	n += 1  # iteration counter
