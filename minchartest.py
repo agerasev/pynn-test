@@ -46,18 +46,18 @@ opt = {
 
 net = nn.Network(
 	[
-		nn.Matrix((vocab_size, hidden_size), **opt, weight=Wxh.T),
+		nn.Matrix((vocab_size, hidden_size), weight=Wxh.T, **opt),
 
 		nn.Fork(**opt),
-		nn.Bias(hidden_size, **opt, weight=bh.reshape(hidden_size)),
+		nn.Bias(hidden_size, weight=bh.reshape(hidden_size), **opt),
 		nn.Tanh(**opt),
 		nn.Fork(**opt),
 
-		nn.Depot(**opt, weight=istate.reshape(hidden_size)),
-		nn.Matrix((hidden_size, hidden_size), **opt, weight=Whh.T),
+		nn.Depot(weight=istate.reshape(hidden_size), **opt),
+		nn.Matrix((hidden_size, hidden_size), weight=Whh.T, **opt),
 
-		nn.Matrix((hidden_size, vocab_size), **opt, weight=Why.T),
-		nn.Bias(vocab_size, **opt, weight=by.reshape(vocab_size)),
+		nn.Matrix((hidden_size, vocab_size), weight=Why.T, **opt),
+		nn.Bias(vocab_size, weight=by.reshape(vocab_size), **opt),
 		nn.SoftmaxLoss(**opt)
 	],
 	[
@@ -201,6 +201,7 @@ mWxh, mWhh, mWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
 mbh, mby = np.zeros_like(bh), np.zeros_like(by)  # memory variables for Adagrad
 smooth_loss = -np.log(1.0/vocab_size)*seq_length  # loss at iteration 0
 for i in range(2):  # while True:
+	print('stage %d:' % i)
 	# prepare inputs (we're sweeping from left to right in steps seq_length long)
 	if p+seq_length+1 >= len(data) or n == 0:
 		hprev = istate  # np.zeros((hidden_size, 1))  # reset RNN memory
